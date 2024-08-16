@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  labels:
+    app: web-app
+spec:
+  replicas: 4  # Based on load test, 4 pods can handle the peak load
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      containers:
+      - name: web-container
+        image: your-web-app-image:latest
+        resources:
+          requests:
+            memory: "128Mi"  # Flat memory consumption
+            cpu: "0.1"       # Flat CPU consumption post-initialization
+          limits:
+            memory: "256Mi"  # Reserve more for burst load or unexpected usage spikes
+            cpu: "1"         # Allow for CPU burst during initialization
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"] # Allow graceful termination
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 80
+          initialDelaySeconds: 15  # Application requires 5-10 seconds to initialize
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 30
+      nodeSelector:
+        # Ensure the application pods are spread across zones
+        # Modify these values according to your node labels for zones
+        failure-domain.beta.kubernetes.io/zone: "zone1"  # Example label for zone
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app-service
+spec:
+  selector:
+    app: web-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-app
+  minReplicas: 1  # Scale down to 1 pod during low load periods at night
+  maxReplicas: 6  # Provide some headroom for scaling beyond peak
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70  # Scale when CPU utilization exceeds 70%
